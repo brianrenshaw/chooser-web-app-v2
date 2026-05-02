@@ -151,8 +151,12 @@ function setArc(gesture) {
     const firstPuck = svg.querySelector('circle.puck');
     svg.insertBefore(arc, firstPuck);
   }
-  const puckAngle = (playerAngles.get(gesture.playerId) ?? gesture.anchorAngle);
-  arc.setAttribute('d', arcPathFromTo(gesture.anchorAngle, puckAngle));
+  // Use cumulative rotation, not the puck's atan2 angle. atan2 wraps at
+  // +/-pi, which would make the arc visually jump backward when the
+  // finger crosses the left side of the ring. cumulativeDeltaRad keeps
+  // monotonically growing in the drag direction.
+  const endAngle = gesture.anchorAngle + gesture.cumulativeDeltaRad;
+  arc.setAttribute('d', arcPathFromTo(gesture.anchorAngle, endAngle));
 }
 
 function removeArc(playerId) {

@@ -270,8 +270,14 @@ html, body {
 
 .scoring-ring .puck {
   filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.04));
-  transition: cx 250ms cubic-bezier(0.2, 0.8, 0.2, 1.2),
-              cy 250ms cubic-bezier(0.2, 0.8, 0.2, 1.2);
+  /* No default transition — puck must follow the finger 1:1 during a
+     drag. Snap-back is animated by adding the .snapping class on
+     pointerup; removed when the transition completes. */
+}
+
+.scoring-ring .puck.snapping {
+  transition: cx 280ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              cy 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 [hidden] { display: none !important; }
