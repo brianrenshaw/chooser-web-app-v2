@@ -95,3 +95,97 @@ html, body {
   animation: none;
   filter: brightness(0.4);
 }
+
+/* Top corner buttons (gear, history) */
+.top-button {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top, 14px));
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  background: rgba(28, 28, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+  font: inherit;
+}
+
+.top-button:hover {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.top-button:active {
+  transform: scale(0.94);
+}
+
+#gear-button { right: max(14px, env(safe-area-inset-right, 14px)); }
+#history-button { left: max(14px, env(safe-area-inset-left, 14px)); }
+
+/* Scoring stage layout */
+#scoring-stage {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: max(56px, env(safe-area-inset-top, 56px)) 24px max(56px, env(safe-area-inset-bottom, 56px));
+}
+
+.player-label {
+  text-align: center;
+  padding: 8px 0;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.player-name {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+  opacity: 0.95;
+}
+
+.player-score {
+  font-size: clamp(56px, 14vh, 96px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.scoring-ring {
+  width: min(74vw, 56vh);
+  height: min(74vw, 56vh);
+  flex-shrink: 0;
+  margin: 12px 0;
+  display: block;
+  overflow: visible;
+}
+
+.scoring-ring .ring-track {
+  fill: none;
+  stroke: #1c1c1e;
+}
+
+.scoring-ring .puck {
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.04));
+  transition: cx 250ms cubic-bezier(0.2, 0.8, 0.2, 1.2),
+              cy 250ms cubic-bezier(0.2, 0.8, 0.2, 1.2);
+}
+
+[hidden] { display: none !important; }
