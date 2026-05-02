@@ -1,0 +1,18 @@
+{
+  "name": "chooser-web-app-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Finger chooser plus Scoring Mode (v2). Mobile web app, also wrapped for iOS via Capacitor.",
+  "scripts": {
+    "cap:sync": "cap sync ios",
+    "cap:open": "cap open ios"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/haptics": "^7.0.0",
+    "@capacitor/ios": "^7.0.0"
+  }
+}
