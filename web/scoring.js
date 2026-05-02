@@ -371,38 +371,122 @@ function renderRing() {
   return el;
 }
 
-function renderPlayerLabels() {
-  const wrap = document.createElement('div');
-  wrap.className = 'player-labels';
+function makePlayerLabelEl(p, extraClass = '') {
+  const el = document.createElement('div');
+  el.className = 'player-label' + (extraClass ? ' ' + extraClass : '');
+  el.dataset.playerId = p.id;
+  el.style.color = `oklch(70% 0.20 ${p.hue})`;
+  el.innerHTML = `
+    <div class="player-name">${escapeHtml(p.name)}</div>
+    <div class="player-score">${p.score}</div>
+  `;
+  return el;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
+}
+
+let labelResizeObserver = null;
+
+function disconnectLabelObserver() {
+  if (labelResizeObserver) {
+    try { labelResizeObserver.disconnect(); } catch (_) {}
+    labelResizeObserver = null;
+  }
+}
+
+function positionRadialLabels(container) {
+  const rect = container.getBoundingClientRect();
+  if (rect.width === 0) return;
+  const halfW = rect.width / 2;
+  // SVG fills container 100%. Visible ring radius in container px:
+  const ringR = halfW * (RING_RADIUS / (RING_RADIUS + VIEWBOX_PAD));
+  // Place label center just outside the ring + puck, with a dynamic gap.
+  const labelR = ringR + Math.min(56, halfW * 0.22);
   for (const p of players) {
-    const el = document.createElement('div');
-    el.className = 'player-label';
-    el.dataset.playerId = p.id;
-    el.dataset.anchor = p.index === 0 ? 'top' : 'bottom';
-    el.style.color = `oklch(70% 0.20 ${p.hue})`;
-    el.innerHTML = `
-      <div class="player-name">${p.name}</div>
+    const angle = anchorAngleRad(p.index, players.length);
+    const x = Math.cos(angle) * labelR;
+    const y = Math.sin(angle) * labelR;
+    const rotDeg = angle * 180 / Math.PI + 90;
+    const label = container.querySelector(
+      `.player-label.radial[data-player-id="${p.id}"]`
+    );
+    if (!label) continue;
+    label.style.transform =
+      `translate(-50%, -50%) translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) rotate(${rotDeg.toFixed(1)}deg)`;
+  }
+}
+
+function renderTwoPlayerLayout() {
+  const top = makePlayerLabelEl(players[0]);
+  top.dataset.anchor = 'top';
+  const bottom = makePlayerLabelEl(players[1]);
+  bottom.dataset.anchor = 'bottom';
+  stage.appendChild(top);
+  svg = renderRing();
+  stage.appendChild(svg);
+  stage.appendChild(bottom);
+}
+
+function renderRadialLayout() {
+  const container = document.createElement('div');
+  container.className = 'ring-container radial';
+  svg = renderRing();
+  container.appendChild(svg);
+  for (const p of players) {
+    const label = makePlayerLabelEl(p, 'radial');
+    container.appendChild(label);
+  }
+  stage.appendChild(container);
+  // Position labels after the container has its computed size.
+  requestAnimationFrame(() => positionRadialLabels(container));
+  if (window.ResizeObserver) {
+    disconnectLabelObserver();
+    labelResizeObserver = new ResizeObserver(() => positionRadialLabels(container));
+    labelResizeObserver.observe(container);
+  } else {
+    window.addEventListener('resize', () => positionRadialLabels(container));
+  }
+}
+
+function renderStackLayout() {
+  // 9+ players: vertical scroll of one row per player. Drag gesture is
+  // not supported in this fallback layout; players can still see scores
+  // but must use Settings to add/remove or adjust the game. A future
+  // iteration could give each player their own mini-dial here.
+  const wrap = document.createElement('div');
+  wrap.className = 'players-stack';
+  const note = document.createElement('div');
+  note.className = 'stack-note';
+  note.textContent = 'Scoring with 9+ players is read-only for now. Use the chooser or remove players in Settings.';
+  wrap.appendChild(note);
+  for (const p of players) {
+    const row = document.createElement('div');
+    row.className = 'player-row-stack';
+    row.dataset.playerId = p.id;
+    row.style.color = `oklch(70% 0.20 ${p.hue})`;
+    row.innerHTML = `
+      <div class="player-name">${escapeHtml(p.name)}</div>
       <div class="player-score">${p.score}</div>
     `;
-    wrap.appendChild(el);
+    wrap.appendChild(row);
   }
-  return wrap;
+  stage.appendChild(wrap);
+  svg = null; // no ring → drag gestures cannot start
 }
 
 function render() {
+  disconnectLabelObserver();
   stage.innerHTML = '';
-  if (players.length === 2) {
-    const labels = renderPlayerLabels();
-    const top = labels.querySelector('[data-anchor="top"]');
-    const bottom = labels.querySelector('[data-anchor="bottom"]');
-    stage.appendChild(top);
-    svg = renderRing();
-    stage.appendChild(svg);
-    stage.appendChild(bottom);
+  if (players.length <= 2) {
+    renderTwoPlayerLayout();
+  } else if (players.length <= 8) {
+    renderRadialLayout();
   } else {
-    stage.appendChild(renderPlayerLabels());
-    svg = renderRing();
-    stage.appendChild(svg);
+    renderStackLayout();
   }
 }
 

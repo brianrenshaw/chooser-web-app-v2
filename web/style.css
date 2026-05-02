@@ -177,6 +177,80 @@ html, body {
   overflow: visible;
 }
 
+.ring-container.radial {
+  position: relative;
+  width: min(86vw, 62vh);
+  height: min(86vw, 62vh);
+  flex-shrink: 0;
+  margin: 12px 0;
+}
+
+.ring-container.radial .scoring-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+.player-label.radial {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  /* JS sets transform with translate offsets and rotation */
+}
+
+.player-label.radial .player-name {
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.player-label.radial .player-score {
+  font-size: clamp(36px, 8vh, 56px);
+}
+
+.players-stack {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  overflow-y: auto;
+}
+
+.players-stack .stack-note {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+  padding: 12px 16px;
+  line-height: 1.4;
+}
+
+.player-row-stack {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  margin: 0 12px;
+}
+
+.player-row-stack .player-name {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.player-row-stack .player-score {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .scoring-ring .arc-trail {
   fill: none;
   stroke-linecap: round;
