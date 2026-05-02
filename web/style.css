@@ -169,12 +169,24 @@ html, body {
 }
 
 .scoring-ring {
-  width: min(74vw, 56vh);
-  height: min(74vw, 56vh);
+  width: min(86vw, 62vh);
+  height: min(86vw, 62vh);
   flex-shrink: 0;
   margin: 12px 0;
   display: block;
   overflow: visible;
+}
+
+.scoring-ring .arc-trail {
+  fill: none;
+  stroke-linecap: round;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.player-label.dragging .player-score {
+  /* Slight emphasis when showing the live delta preview */
+  filter: brightness(1.1);
 }
 
 .scoring-ring .ring-track {
@@ -189,3 +201,412 @@ html, body {
 }
 
 [hidden] { display: none !important; }
+
+/* Modals (settings, history, players subview) */
+#modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+}
+
+#modal-root .modal {
+  position: absolute;
+  inset: 0;
+  background: #0a0a0a;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  animation: modal-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes modal-in {
+  from { transform: translateY(100%); opacity: 0.7; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.modal-header {
+  position: relative;
+  padding: max(14px, env(safe-area-inset-top)) 16px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.modal-close {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close:hover {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 16px max(16px, env(safe-area-inset-bottom));
+}
+
+.settings-section-header {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 16px 12px 6px;
+}
+
+.settings-card {
+  background: #141414;
+  border-radius: 12px;
+  margin: 0 0 12px;
+  overflow: hidden;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 12px;
+  min-height: 46px;
+  font-size: 16px;
+}
+
+.settings-row:first-child { border-top: 0; }
+
+.settings-row .row-icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(120, 200, 255, 0.85);
+  flex-shrink: 0;
+}
+
+.settings-row .row-label {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.settings-row .row-value {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.settings-row .chevron {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 18px;
+  margin-left: 4px;
+}
+
+.settings-row.tappable {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.settings-row.tappable:active {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-row input[type="text"],
+.settings-row textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 16px;
+  font-family: inherit;
+  resize: none;
+  padding: 0;
+}
+
+.settings-row input::placeholder,
+.settings-row textarea::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.settings-row.notes-row {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.settings-row.notes-row textarea {
+  min-height: 36px;
+  line-height: 1.4;
+}
+
+/* iOS-style toggle */
+.toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 51px;
+  height: 31px;
+  border-radius: 16px;
+  background: rgba(120, 120, 128, 0.32);
+  position: relative;
+  cursor: pointer;
+  transition: background 200ms ease;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 14px;
+  background: #fff;
+  transition: transform 200ms ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.toggle:checked {
+  background: #34c759;
+}
+
+.toggle:checked::after {
+  transform: translateX(20px);
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.stepper button {
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  font-family: inherit;
+}
+
+.stepper button:disabled {
+  opacity: 0.3;
+}
+
+.stepper-value {
+  min-width: 24px;
+  text-align: center;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.action-card {
+  background: #141414;
+  border-radius: 12px;
+  margin: 0 0 12px;
+  overflow: hidden;
+}
+
+.action-card button {
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: #2196f3;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.action-card button.destructive {
+  color: #ff453a;
+}
+
+.action-card button:active {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Players list */
+.players-list .settings-row {
+  gap: 10px;
+}
+
+.players-list .swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+}
+
+.players-list .name-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 16px;
+  font-family: inherit;
+}
+
+.players-list .remove-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  background: rgba(255, 69, 58, 0.15);
+  border: none;
+  color: #ff453a;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.color-picker {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 8px;
+  padding: 12px 14px 14px;
+}
+
+.color-picker .swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+}
+
+.color-picker .swatch.selected {
+  border-color: #fff;
+  transform: scale(1.08);
+}
+
+/* History modal */
+.history-modal .modal-body {
+  padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-totals {
+  display: flex;
+  padding: 8px 16px 16px;
+  gap: 16px;
+}
+
+.history-totals .col {
+  flex: 1;
+  text-align: center;
+}
+
+.history-totals .col-name {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+
+.history-totals .col-total {
+  font-size: 32px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.history-rows {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px;
+}
+
+.history-row {
+  display: flex;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 14px 0;
+  gap: 16px;
+}
+
+.history-row.empty {
+  color: rgba(255, 255, 255, 0.3);
+  justify-content: center;
+  font-size: 14px;
+  padding: 24px 0;
+}
+
+.history-row .col {
+  flex: 1;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-actions {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px max(16px, env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.6);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.history-actions button {
+  flex: 1;
+  padding: 12px;
+  border-radius: 22px;
+  background: #1c1c1e;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.history-actions button:disabled {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.history-actions button:active:not(:disabled) {
+  background: #2a2a2e;
+}
