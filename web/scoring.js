@@ -4,35 +4,41 @@
 // around the ring center, every 30° of cumulative rotation = one
 // detent (=+SCORE_STEP, or -SCORE_STEP if Allow Negative Scores is on).
 // Releasing commits the total delta as one undoable action.
+//
+// Rendering: the ring, arcs, and pucks are drawn on a single <canvas>
+// element. SVG was tried first but its arc command becomes ambiguous
+// near 2π span and z-order has to be managed by reordering DOM nodes;
+// canvas's ctx.arc takes start/end angles directly and z-order is
+// just draw order.
 
 import { detentHaptic, commitHaptic, ensureAudio } from './feedback.js';
 import * as storage from './storage.js';
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const RING_RADIUS = 100;
+const RING_RADIUS = 100;                  // logical units; scales to canvas
 const RING_STROKE = 36;
 const PUCK_RADIUS = 18;
-const VIEWBOX_PAD = 26;
-const DETENT_RAD = Math.PI / 6;            // 30° per detent
-const HIT_ANGULAR_TOLERANCE = Math.PI / 3;  // 60° max from puck for hit-test
-const HIT_RADIAL_TOLERANCE = 80;            // pixels from ring track for hit-test
+const VIEWBOX_PAD = 26;                   // breathing room around the ring
+const DETENT_RAD = Math.PI / 6;           // 30° per detent
+const HIT_ANGULAR_TOLERANCE = Math.PI / 3;
+const HIT_RADIAL_TOLERANCE = 80;
 const ARC_VISUAL_CLAMP = 2 * Math.PI - 0.001;
 
-// Phase D: hardcoded gameplay constants. Phase F's settings modal will
-// route the user-chosen values into these.
 let SCORE_STEP = 1;
 let ALLOW_NEGATIVE = false;
 
 let stage = null;
-let svg = null;                  // the SVG ring element
+let canvas = null;                        // the <canvas> ring element
+let ctx = null;
+let canvasResizeObserver = null;
+let drawScheduled = false;
 let mounted = false;
 let players = [];
 let game = defaultGame();
-const ledger = [];               // chronological record of every commit
+const ledger = [];
 const undoStack = [];
 const redoStack = [];
-const playerAngles = new Map();  // playerId -> current visual angle (rad)
-const gestures = new Map();      // pointerId -> gesture state
+const playerAngles = new Map();           // playerId -> current visual angle (rad)
+const gestures = new Map();               // pointerId -> gesture state
 let listeners = [];
 
 const LEDGER_CAP = 500;
@@ -55,13 +61,6 @@ function anchorAngleRad(i, n) {
   return -Math.PI / 2 + (2 * Math.PI * i) / n;
 }
 
-function pointOnRing(angleRad, radius = RING_RADIUS) {
-  return {
-    x: Math.cos(angleRad) * radius,
-    y: Math.sin(angleRad) * radius,
-  };
-}
-
 function getPlayer(id) {
   return players.find((p) => p.id === id) ?? null;
 }
@@ -71,13 +70,131 @@ function isPlayerInGesture(playerId) {
   return false;
 }
 
+// ---- Canvas setup and drawing ----
+
+function setupCanvas(parent) {
+  canvas = document.createElement('canvas');
+  canvas.className = 'scoring-ring';
+  parent.appendChild(canvas);
+  ctx = canvas.getContext('2d');
+  resizeCanvas();
+  if (window.ResizeObserver) {
+    canvasResizeObserver = new ResizeObserver(() => resizeCanvas());
+    canvasResizeObserver.observe(canvas);
+  }
+}
+
+function teardownCanvas() {
+  if (canvasResizeObserver) {
+    try { canvasResizeObserver.disconnect(); } catch (_) {}
+    canvasResizeObserver = null;
+  }
+  canvas = null;
+  ctx = null;
+}
+
+function resizeCanvas() {
+  if (!canvas || !ctx) return;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  draw();
+}
+
+// Compute the visible ring radius (in CSS pixels) for the current canvas size.
+function ringPixelRadius(cssWidth, cssHeight) {
+  const half = Math.min(cssWidth, cssHeight) / 2;
+  return half * (RING_RADIUS / (RING_RADIUS + VIEWBOX_PAD));
+}
+
+function scheduleDraw() {
+  if (drawScheduled) return;
+  drawScheduled = true;
+  requestAnimationFrame(() => {
+    drawScheduled = false;
+    draw();
+  });
+}
+
+function draw() {
+  if (!ctx || !canvas) return;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (w === 0 || h === 0) return;
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = ringPixelRadius(w, h);
+  const stroke = r * (RING_STROKE / RING_RADIUS);
+  const puckR = r * (PUCK_RADIUS / RING_RADIUS);
+
+  ctx.clearRect(0, 0, w, h);
+
+  // 1) Ring track (full circle, dark grey)
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+  ctx.lineWidth = stroke;
+  ctx.strokeStyle = '#1c1c1e';
+  ctx.lineCap = 'butt';
+  ctx.stroke();
+
+  const activeIds = new Set();
+  for (const g of gestures.values()) activeIds.add(g.playerId);
+
+  // 2) Idle pucks (rendered behind any active arc that sweeps past them)
+  for (const p of players) {
+    if (activeIds.has(p.id)) continue;
+    const angle = playerAngles.get(p.id) ?? anchorAngleRad(p.index, players.length);
+    drawPuck(cx, cy, r, puckR, angle, p.hue);
+  }
+
+  // 3) Active arcs (cover idle pucks they overlap)
+  for (const g of gestures.values()) {
+    drawArc(cx, cy, r, stroke, g);
+  }
+
+  // 4) Active pucks (on top of arcs)
+  for (const p of players) {
+    if (!activeIds.has(p.id)) continue;
+    const angle = playerAngles.get(p.id) ?? anchorAngleRad(p.index, players.length);
+    drawPuck(cx, cy, r, puckR, angle, p.hue);
+  }
+}
+
+function drawPuck(cx, cy, ringR, puckR, angleRad, hue) {
+  const px = cx + Math.cos(angleRad) * ringR;
+  const py = cy + Math.sin(angleRad) * ringR;
+  ctx.beginPath();
+  ctx.arc(px, py, puckR, 0, 2 * Math.PI);
+  ctx.fillStyle = `oklch(70% 0.20 ${hue})`;
+  ctx.fill();
+}
+
+function drawArc(cx, cy, r, stroke, gesture) {
+  const cum = gesture.cumulativeDeltaRad;
+  if (Math.abs(cum) < 0.001) return;
+  const clamped = Math.max(-ARC_VISUAL_CLAMP, Math.min(ARC_VISUAL_CLAMP, cum));
+  const start = gesture.anchorAngle;
+  const end = start + clamped;
+  const anticlockwise = clamped < 0;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, start, end, anticlockwise);
+  ctx.lineWidth = stroke;
+  ctx.strokeStyle = `oklch(70% 0.20 ${gesture.hue})`;
+  ctx.lineCap = 'butt';
+  ctx.stroke();
+}
+
+// ---- Hit testing ----
+
 function getRingScreenGeometry() {
-  if (!svg) return null;
-  const rect = svg.getBoundingClientRect();
+  if (!canvas) return null;
+  const rect = canvas.getBoundingClientRect();
   const cx = rect.left + rect.width / 2;
   const cy = rect.top + rect.height / 2;
-  // SVG viewBox spans 2*(RING_RADIUS + VIEWBOX_PAD); ring radius in screen px
-  const screenRadius = (rect.width / 2) * (RING_RADIUS / (RING_RADIUS + VIEWBOX_PAD));
+  const screenRadius = ringPixelRadius(rect.width, rect.height);
   return { cx, cy, screenRadius };
 }
 
@@ -91,8 +208,6 @@ function angularDistance(a, b) {
   return Math.abs(d);
 }
 
-// Find the closest puck to the given screen point that is not currently
-// being dragged. Returns the player or null.
 function hitTestPuck(screenX, screenY) {
   const geom = getRingScreenGeometry();
   if (!geom) return null;
@@ -101,12 +216,11 @@ function hitTestPuck(screenX, screenY) {
   const distFromCenter = Math.hypot(dx, dy);
   if (Math.abs(distFromCenter - geom.screenRadius) > HIT_RADIAL_TOLERANCE) return null;
   const fingerAngle = Math.atan2(dy, dx);
-
   let best = null;
   let bestDelta = Infinity;
   for (const p of players) {
     if (isPlayerInGesture(p.id)) continue;
-    const puckAngle = playerAngles.get(p.id) ?? 0;
+    const puckAngle = playerAngles.get(p.id) ?? anchorAngleRad(p.index, players.length);
     const delta = angularDistance(fingerAngle, puckAngle);
     if (delta < bestDelta) {
       bestDelta = delta;
@@ -117,68 +231,12 @@ function hitTestPuck(screenX, screenY) {
   return best;
 }
 
-function setPuckPosition(player, angleRad) {
-  playerAngles.set(player.id, angleRad);
-  const puck = svg.querySelector(`circle.puck[data-player-id="${player.id}"]`);
-  if (!puck) return;
-  const pos = pointOnRing(angleRad);
-  puck.setAttribute('cx', pos.x.toFixed(3));
-  puck.setAttribute('cy', pos.y.toFixed(3));
+function setPuckAngle(playerId, angleRad) {
+  playerAngles.set(playerId, angleRad);
+  scheduleDraw();
 }
 
-function arcPathFromTo(fromAngle, toAngle) {
-  // Render the arc as a chain of <= 90 degree segments. A single SVG
-  // arc command becomes ambiguous as the span approaches 2pi (start and
-  // end nearly identical, largeArc/sweepFlag combinations behave
-  // inconsistently across browsers). Splitting into 90-degree pieces
-  // sidesteps the issue and always draws a clean continuous arc.
-  const span = toAngle - fromAngle;
-  const clamped = Math.max(-ARC_VISUAL_CLAMP, Math.min(ARC_VISUAL_CLAMP, span));
-  if (Math.abs(clamped) < 0.001) return '';
-  const sign = clamped >= 0 ? 1 : -1;
-  const absSpan = Math.abs(clamped);
-  const SEG_MAX = Math.PI / 2;
-  const segments = Math.max(1, Math.ceil(absSpan / SEG_MAX));
-  const segSpan = absSpan / segments;
-  const start = pointOnRing(fromAngle);
-  let d = `M ${start.x.toFixed(3)} ${start.y.toFixed(3)}`;
-  for (let i = 1; i <= segments; i++) {
-    const a = fromAngle + sign * i * segSpan;
-    const p = pointOnRing(a);
-    d += ` A ${RING_RADIUS} ${RING_RADIUS} 0 0 ${sign > 0 ? 1 : 0} ${p.x.toFixed(3)} ${p.y.toFixed(3)}`;
-  }
-  return d;
-}
-
-function setArc(gesture) {
-  let arc = svg.querySelector(`path.arc-trail[data-player-id="${gesture.playerId}"]`);
-  if (!arc) {
-    arc = document.createElementNS(SVG_NS, 'path');
-    arc.classList.add('arc-trail');
-    arc.dataset.playerId = gesture.playerId;
-    arc.setAttribute('stroke-width', String(RING_STROKE));
-    arc.setAttribute('stroke', `oklch(70% 0.20 ${gesture.hue})`);
-    // Insert immediately before this player's own puck so the puck
-    // remains on top of its own arc, but the arc covers any other
-    // pucks (idle anchors) it sweeps past during the rotation.
-    const ownPuck = svg.querySelector(
-      `circle.puck[data-player-id="${gesture.playerId}"]`
-    );
-    if (ownPuck) svg.insertBefore(arc, ownPuck);
-    else svg.appendChild(arc);
-  }
-  // Use cumulative rotation, not the puck's atan2 angle. atan2 wraps at
-  // +/-pi, which would make the arc visually jump backward when the
-  // finger crosses the left side of the ring. cumulativeDeltaRad keeps
-  // monotonically growing in the drag direction.
-  const endAngle = gesture.anchorAngle + gesture.cumulativeDeltaRad;
-  arc.setAttribute('d', arcPathFromTo(gesture.anchorAngle, endAngle));
-}
-
-function removeArc(playerId) {
-  const arc = svg.querySelector(`path.arc-trail[data-player-id="${playerId}"]`);
-  if (arc) arc.remove();
-}
+// ---- Score label updates (HTML, separate from canvas) ----
 
 function setScoreText(player, text, isDelta) {
   const labelEl = stage.querySelector(`.player-label[data-player-id="${player.id}"]`);
@@ -194,7 +252,7 @@ function refreshScoreText(player) {
 
 function formatDelta(n) {
   if (n > 0) return `+${n}`;
-  if (n < 0) return String(n); // already has minus
+  if (n < 0) return String(n);
   return '+0';
 }
 
@@ -204,6 +262,8 @@ function unwrapAngleDelta(prev, curr) {
   if (d < -Math.PI) d += 2 * Math.PI;
   return d;
 }
+
+// ---- Gesture handlers ----
 
 function startGesture(e, player) {
   const geom = getRingScreenGeometry();
@@ -223,18 +283,10 @@ function startGesture(e, player) {
     initialPuckAngle: playerAngles.get(player.id) ?? anchorAngle,
   };
   gestures.set(e.pointerId, gesture);
-  // Move this player's puck to the end of the SVG so it renders on top.
-  // The arc (created by setArc) is then inserted immediately before it,
-  // which puts the arc above all other (idle) pucks while keeping the
-  // active puck on top of its own arc.
-  const ownPuck = svg.querySelector(
-    `circle.puck[data-player-id="${player.id}"]`
-  );
-  if (ownPuck) svg.appendChild(ownPuck);
   // Decouple puck from anchor; it now follows the finger.
-  setPuckPosition(player, startAngle);
+  setPuckAngle(player.id, startAngle);
   setScoreText(player, formatDelta(0), true);
-  setArc(gesture);
+  scheduleDraw();
 }
 
 function updateGesture(e) {
@@ -253,17 +305,12 @@ function updateGesture(e) {
   const targetDetents = Math.floor(Math.abs(cum) / DETENT_RAD);
   const sign = cum >= 0 ? 1 : -1;
 
-  // If the user reverses direction, retract committed detents accordingly.
-  // Simplest model: detentsCommitted always reflects current absolute count
-  // matching the cumulative sign.
   if (sign !== gesture.sign && targetDetents === 0) {
     gesture.sign = 0;
     gesture.detentsCommitted = 0;
   } else if (targetDetents !== gesture.detentsCommitted || sign !== gesture.sign) {
-    // Fire haptic for each newly crossed detent (only when moving away from 0).
     const crossings = targetDetents - gesture.detentsCommitted;
     if (crossings > 0 && targetDetents > 0) {
-      // Suppress negative direction if not allowed; clamp to 0 detent count.
       if (!ALLOW_NEGATIVE && sign < 0) {
         gesture.sign = -1;
         gesture.detentsCommitted = targetDetents;
@@ -278,17 +325,13 @@ function updateGesture(e) {
     }
   }
 
-  // Compute live delta for preview (zero-clamped if negative is disallowed).
   let liveDelta = gesture.sign * gesture.detentsCommitted * SCORE_STEP;
   if (!ALLOW_NEGATIVE && (player.score + liveDelta) < 0) {
     liveDelta = -player.score;
   }
-
   setScoreText(player, formatDelta(liveDelta), true);
 
-  // Reposition puck to current finger angle along the ring.
-  setPuckPosition(player, currAngle);
-  setArc(gesture);
+  setPuckAngle(player.id, currAngle);
 }
 
 function commitGesture(e) {
@@ -296,7 +339,10 @@ function commitGesture(e) {
   if (!gesture) return;
   const player = getPlayer(gesture.playerId);
   gestures.delete(e.pointerId);
-  if (!player) return;
+  if (!player) {
+    scheduleDraw();
+    return;
+  }
 
   let totalDelta = gesture.sign * gesture.detentsCommitted * SCORE_STEP;
   if (!ALLOW_NEGATIVE && (player.score + totalDelta) < 0) {
@@ -317,10 +363,9 @@ function commitGesture(e) {
   }
 
   refreshScoreText(player);
-  removeArc(player.id);
-  // Snap puck back to anchor with CSS transition.
+  // Snap puck back to anchor (instantaneous teleport on canvas).
   const anchor = anchorAngleRad(player.index, players.length);
-  setPuckPosition(player, anchor);
+  setPuckAngle(player.id, anchor);
 }
 
 function cancelGesture(e) {
@@ -328,11 +373,13 @@ function cancelGesture(e) {
   if (!gesture) return;
   const player = getPlayer(gesture.playerId);
   gestures.delete(e.pointerId);
-  if (!player) return;
-  removeArc(player.id);
+  if (!player) {
+    scheduleDraw();
+    return;
+  }
   refreshScoreText(player);
   const anchor = anchorAngleRad(player.index, players.length);
-  setPuckPosition(player, anchor);
+  setPuckAngle(player.id, anchor);
 }
 
 function onPointerDown(e) {
@@ -367,37 +414,7 @@ function on(target, type, fn) {
   listeners.push({ target, type, fn });
 }
 
-function renderRing() {
-  const half = RING_RADIUS + VIEWBOX_PAD;
-  const el = document.createElementNS(SVG_NS, 'svg');
-  el.classList.add('scoring-ring');
-  el.setAttribute('viewBox', `${-half} ${-half} ${half * 2} ${half * 2}`);
-  el.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-
-  const track = document.createElementNS(SVG_NS, 'circle');
-  track.classList.add('ring-track');
-  track.setAttribute('cx', '0');
-  track.setAttribute('cy', '0');
-  track.setAttribute('r', String(RING_RADIUS));
-  track.setAttribute('stroke-width', String(RING_STROKE));
-  el.appendChild(track);
-
-  for (const p of players) {
-    const angle = playerAngles.get(p.id) ?? anchorAngleRad(p.index, players.length);
-    playerAngles.set(p.id, angle);
-    const pos = pointOnRing(angle);
-    const puck = document.createElementNS(SVG_NS, 'circle');
-    puck.classList.add('puck');
-    puck.dataset.playerId = p.id;
-    puck.setAttribute('cx', pos.x.toFixed(3));
-    puck.setAttribute('cy', pos.y.toFixed(3));
-    puck.setAttribute('r', String(PUCK_RADIUS));
-    puck.setAttribute('fill', `oklch(70% 0.20 ${p.hue})`);
-    el.appendChild(puck);
-  }
-
-  return el;
-}
+// ---- Layout (HTML labels + canvas placement) ----
 
 function makePlayerLabelEl(p, extraClass = '') {
   const el = document.createElement('div');
@@ -430,9 +447,7 @@ function positionRadialLabels(container) {
   const rect = container.getBoundingClientRect();
   if (rect.width === 0) return;
   const halfW = rect.width / 2;
-  // SVG fills container 100%. Visible ring radius in container px:
   const ringR = halfW * (RING_RADIUS / (RING_RADIUS + VIEWBOX_PAD));
-  // Place label center just outside the ring + puck, with a dynamic gap.
   const labelR = ringR + Math.min(56, halfW * 0.22);
   for (const p of players) {
     const angle = anchorAngleRad(p.index, players.length);
@@ -448,29 +463,37 @@ function positionRadialLabels(container) {
   }
 }
 
+function ensureAnglesInitialized() {
+  for (const p of players) {
+    if (!playerAngles.has(p.id)) {
+      playerAngles.set(p.id, anchorAngleRad(p.index, players.length));
+    }
+  }
+}
+
 function renderTwoPlayerLayout() {
   const top = makePlayerLabelEl(players[0]);
   top.dataset.anchor = 'top';
   const bottom = makePlayerLabelEl(players[1]);
   bottom.dataset.anchor = 'bottom';
   stage.appendChild(top);
-  svg = renderRing();
-  stage.appendChild(svg);
-  stage.appendChild(bottom);
+  setupCanvas(stage);                 // appends the canvas to stage
+  stage.appendChild(bottom);          // bottom label comes after the canvas
 }
 
 function renderRadialLayout() {
   const container = document.createElement('div');
   container.className = 'ring-container radial';
-  svg = renderRing();
-  container.appendChild(svg);
+  setupCanvas(container);
+  stage.appendChild(container);
   for (const p of players) {
     const label = makePlayerLabelEl(p, 'radial');
     container.appendChild(label);
   }
-  stage.appendChild(container);
-  // Position labels after the container has its computed size.
-  requestAnimationFrame(() => positionRadialLabels(container));
+  requestAnimationFrame(() => {
+    positionRadialLabels(container);
+    resizeCanvas();
+  });
   if (window.ResizeObserver) {
     disconnectLabelObserver();
     labelResizeObserver = new ResizeObserver(() => positionRadialLabels(container));
@@ -481,10 +504,6 @@ function renderRadialLayout() {
 }
 
 function renderStackLayout() {
-  // 9+ players: vertical scroll of one row per player. Drag gesture is
-  // not supported in this fallback layout; players can still see scores
-  // but must use Settings to add/remove or adjust the game. A future
-  // iteration could give each player their own mini-dial here.
   const wrap = document.createElement('div');
   wrap.className = 'players-stack';
   const note = document.createElement('div');
@@ -503,12 +522,15 @@ function renderStackLayout() {
     wrap.appendChild(row);
   }
   stage.appendChild(wrap);
-  svg = null; // no ring → drag gestures cannot start
+  // No canvas in stack mode → drag gestures cannot start.
+  teardownCanvas();
 }
 
 function render() {
   disconnectLabelObserver();
+  teardownCanvas();
   stage.innerHTML = '';
+  ensureAnglesInitialized();
   if (players.length <= 2) {
     renderTwoPlayerLayout();
   } else if (players.length <= 8) {
@@ -516,6 +538,7 @@ function render() {
   } else {
     renderStackLayout();
   }
+  scheduleDraw();
 }
 
 function buildPlayersFromInitial(initial) {
@@ -543,6 +566,8 @@ export function onChange(fn) {
     changeListeners = changeListeners.filter((f) => f !== fn);
   };
 }
+
+// ---- Storage / state lifecycle ----
 
 function snapshotForStorage() {
   return {
@@ -664,7 +689,6 @@ export function setGameNotes(notes) {
 }
 
 export function startNewGame(initialPlayers = null) {
-  // Archive the current game if it has any plays.
   if (ledger.length > 0 || players.some((p) => p.score !== 0)) {
     const archive = storage.get('archive') ?? [];
     archive.unshift({
@@ -678,12 +702,10 @@ export function startNewGame(initialPlayers = null) {
     if (archive.length > ARCHIVE_CAP) archive.length = ARCHIVE_CAP;
     storage.set('archive', archive, { debounceMs: 0 });
   }
-  // Reset state.
   game = defaultGame();
   if (initialPlayers && initialPlayers.length > 0) {
     players = buildPlayersFromInitial(initialPlayers);
   } else {
-    // Keep existing players but reset their scores.
     players = players.map((p) => ({ ...p, score: 0 }));
     if (players.length === 0) players = buildPlayersFromInitial(null);
   }
@@ -722,7 +744,6 @@ export function setPlayerHue(id, hue) {
 export function addPlayer() {
   if (players.length >= 8) return;
   const i = players.length;
-  // Pick a hue that's far from existing player hues.
   const usedHues = new Set(players.map((p) => Math.round(p.hue)));
   const palette = [214, 25, 145, 280, 50, 320, 175, 0];
   let hue = palette[i % palette.length];
@@ -737,7 +758,6 @@ export function addPlayer() {
     score: 0,
   };
   players.push(newPlayer);
-  // Re-index so anchor angles stay clean.
   players.forEach((p, idx) => { p.index = idx; });
   playerAngles.clear();
   if (mounted) render();
@@ -751,7 +771,6 @@ export function removePlayer(id) {
   if (idx === -1) return;
   players.splice(idx, 1);
   players.forEach((p, i) => { p.index = i; });
-  // Drop pending undo/redo entries pointing at the removed player.
   for (let i = undoStack.length - 1; i >= 0; i--) {
     if (undoStack[i].playerId === id) undoStack.splice(i, 1);
   }
@@ -792,10 +811,11 @@ export function unmount() {
   if (!mounted) return;
   for (const { target, type, fn } of listeners) target.removeEventListener(type, fn);
   listeners = [];
+  disconnectLabelObserver();
+  teardownCanvas();
   stage.innerHTML = '';
   stage.hidden = true;
   stage = null;
-  svg = null;
   players = [];
   playerAngles.clear();
   gestures.clear();
@@ -810,7 +830,6 @@ export function getPlayers() {
   return players.slice();
 }
 
-// Phase F will call these to apply settings.
 export function setScoreStep(n) {
   SCORE_STEP = Math.max(1, Math.floor(Number(n) || 1));
   persistSettings();

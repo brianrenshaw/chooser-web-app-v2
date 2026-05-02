@@ -90,7 +90,17 @@ Why the late-joiner wait, why pointer events, why the golden angle, why OKLCH �
 
 ### Scoring view: the shared ring
 
-`web/scoring.js` renders one shared ring with one puck per player. Pucks are anchored at evenly-spaced poles around the ring (every `2π / N` radians, starting from 12 o'clock). Player labels sit at their anchor angles, either above/below the ring (2 players) or radially around the ring (3-8 players).
+`web/scoring.js` renders one shared ring with one puck per player on a single HTML `<canvas>` element. Pucks are anchored at evenly-spaced poles around the ring (every `2π / N` radians, starting from 12 o'clock). Player labels sit at their anchor angles as separate HTML elements, either above/below the ring (2 players) or radially around the ring (3-8 players).
+
+### Why canvas, not SVG
+
+The first cut used SVG (`<circle>` for ring/pucks, `<path>` for arcs). Three problems made canvas the better choice:
+
+1.  SVG's single `A` (arc) command becomes ambiguous as the angular span approaches 2π. Different browsers handle the `largeArc`/`sweepFlag` combinations inconsistently when start and end points are nearly identical, so the arc would visually shrink past 270°.
+2.  Z-order in SVG is determined by document order. Arc trails kept getting hidden behind idle pucks unless we manually reordered SVG children on every `pointerdown`.
+3.  CSS transitions on `cx`/`cy` made the puck lag behind the finger. We removed them, but only after the puck visibly stuttered for a release.
+
+Canvas's `ctx.arc(cx, cy, r, startAngle, endAngle, anticlockwise)` is unambiguous regardless of span size; z-order is just draw order; there are no CSS transitions to fight. The state machine, gesture math, and persistence code all stayed; only the rendering layer changed.
 
 ### The drag gesture
 
@@ -363,3 +373,4 @@ The following table tracks meaningful changes.
 | 2026-05-02 | Drag gesture, persistence, settings/history modals, and 3-8 player radial layout shipped together. Detent haptics fire every 30 degrees of rotation; commit haptic on release; `localStorage` persists active game with debounced writes; settings modal matches `IMG_5553.PNG`; history modal matches `IMG_5552.PNG`. 9+ players fall back to a read-only stack. |
 | 2026-05-02 | iOS native scaffolded with `appId com.brianrenshaw.chooser.v2`. Coexists with v1 on the same iPhone since bundle IDs differ. |
 | 2026-05-02 | This process documentation written. |
+| 2026-05-02 | Scoring ring rendering migrated from SVG to HTML5 canvas. Single `draw()` function repaints the scene per frame; ring/arcs/pucks all drawn with `ctx.arc()`. Z-order is now draw order (idle pucks → active arcs → active pucks). Eliminated the SVG arc-span ambiguity, the DOM-reorder z-order hacks, and the CSS-transition lag. |
