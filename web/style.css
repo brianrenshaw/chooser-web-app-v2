@@ -19,7 +19,7 @@ html, body {
   overflow: hidden;
 }
 
-#stage {
+#chooser-stage {
   position: fixed;
   inset: 0;
   background: #000;
@@ -47,7 +47,7 @@ html, body {
   transition: opacity 400ms ease;
 }
 
-#stage.has-fingers #hint {
+#chooser-stage.has-fingers #hint {
   opacity: 0;
 }
 
