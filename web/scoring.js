@@ -127,16 +127,27 @@ function setPuckPosition(player, angleRad) {
 }
 
 function arcPathFromTo(fromAngle, toAngle) {
+  // Render the arc as a chain of <= 90 degree segments. A single SVG
+  // arc command becomes ambiguous as the span approaches 2pi (start and
+  // end nearly identical, largeArc/sweepFlag combinations behave
+  // inconsistently across browsers). Splitting into 90-degree pieces
+  // sidesteps the issue and always draws a clean continuous arc.
   const span = toAngle - fromAngle;
   const clamped = Math.max(-ARC_VISUAL_CLAMP, Math.min(ARC_VISUAL_CLAMP, span));
-  const endAngle = fromAngle + clamped;
+  if (Math.abs(clamped) < 0.001) return '';
+  const sign = clamped >= 0 ? 1 : -1;
+  const absSpan = Math.abs(clamped);
+  const SEG_MAX = Math.PI / 2;
+  const segments = Math.max(1, Math.ceil(absSpan / SEG_MAX));
+  const segSpan = absSpan / segments;
   const start = pointOnRing(fromAngle);
-  const end = pointOnRing(endAngle);
-  const sweepFlag = clamped >= 0 ? 1 : 0;
-  const largeArc = Math.abs(clamped) > Math.PI ? 1 : 0;
-  return `M ${start.x.toFixed(3)} ${start.y.toFixed(3)} `
-    + `A ${RING_RADIUS} ${RING_RADIUS} 0 ${largeArc} ${sweepFlag} `
-    + `${end.x.toFixed(3)} ${end.y.toFixed(3)}`;
+  let d = `M ${start.x.toFixed(3)} ${start.y.toFixed(3)}`;
+  for (let i = 1; i <= segments; i++) {
+    const a = fromAngle + sign * i * segSpan;
+    const p = pointOnRing(a);
+    d += ` A ${RING_RADIUS} ${RING_RADIUS} 0 0 ${sign > 0 ? 1 : 0} ${p.x.toFixed(3)} ${p.y.toFixed(3)}`;
+  }
+  return d;
 }
 
 function setArc(gesture) {
@@ -147,9 +158,14 @@ function setArc(gesture) {
     arc.dataset.playerId = gesture.playerId;
     arc.setAttribute('stroke-width', String(RING_STROKE));
     arc.setAttribute('stroke', `oklch(70% 0.20 ${gesture.hue})`);
-    // Insert before any pucks so the puck draws on top of the arc
-    const firstPuck = svg.querySelector('circle.puck');
-    svg.insertBefore(arc, firstPuck);
+    // Insert immediately before this player's own puck so the puck
+    // remains on top of its own arc, but the arc covers any other
+    // pucks (idle anchors) it sweeps past during the rotation.
+    const ownPuck = svg.querySelector(
+      `circle.puck[data-player-id="${gesture.playerId}"]`
+    );
+    if (ownPuck) svg.insertBefore(arc, ownPuck);
+    else svg.appendChild(arc);
   }
   // Use cumulative rotation, not the puck's atan2 angle. atan2 wraps at
   // +/-pi, which would make the arc visually jump backward when the
@@ -207,6 +223,14 @@ function startGesture(e, player) {
     initialPuckAngle: playerAngles.get(player.id) ?? anchorAngle,
   };
   gestures.set(e.pointerId, gesture);
+  // Move this player's puck to the end of the SVG so it renders on top.
+  // The arc (created by setArc) is then inserted immediately before it,
+  // which puts the arc above all other (idle) pucks while keeping the
+  // active puck on top of its own arc.
+  const ownPuck = svg.querySelector(
+    `circle.puck[data-player-id="${player.id}"]`
+  );
+  if (ownPuck) svg.appendChild(ownPuck);
   // Decouple puck from anchor; it now follows the finger.
   setPuckPosition(player, startAngle);
   setScoreText(player, formatDelta(0), true);
